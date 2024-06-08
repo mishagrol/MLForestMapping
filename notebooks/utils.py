@@ -1,6 +1,4 @@
-import datetime as dt
 import os
-from collections import Counter
 from typing import Tuple
 
 import geopandas as gpd
@@ -8,10 +6,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import rasterio as rio
-import seaborn as sns
 import wget
 from rasterio.mask import mask as crop_mask
-from scipy.stats import loguniform
 from shapely import affinity
 from shapely.geometry import box
 from sklearn import metrics
@@ -23,18 +19,18 @@ from sklearn.ensemble import (
     RandomForestClassifier,
 )
 from sklearn.linear_model import LogisticRegression, RidgeClassifier
-from sklearn.metrics import accuracy_score, f1_score, make_scorer, roc_auc_score
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.utils.class_weight import compute_class_weight
-from tqdm.notebook import tqdm
 from yellowbrick.cluster import KElbowVisualizer
 
 
 class Dataset:
+    """Dataset preparation and filtration for remote sensing data"""
+
     def __init__(self, path_to_tiff_file: str):
-        self.dates_images = []
+        self.dates_images: list = []
         self.scale = 1.0
         self.terrain_cols = ["aspect", "slope", "wetnessindex", "sink"]
         self.cols = self.get_all_cols()
@@ -54,22 +50,36 @@ class Dataset:
             "homogeneity2",
         ]
 
-    def download_dataset(self):
+    def download_dataset(self) -> str:
+        """download dataset with all bands, texture and terrain features from S3 storage
+
+        Returns:
+            str: filename of downloaded tiff
+        """
         filename = "../rasters/bands_and_terrain.tiff"
-        if not os.path.exists("../rasters/"):
-            os.makedirs(name="../rasters/")
+        folder = os.path.join("..", "rasters")
+        if not os.path.exists(folder):
+            os.makedirs(name=folder)
         if os.path.exists(filename):
             print("file downloaded")
             self.path_to_tiff_file = filename
             return filename
         url = "https://storage.yandexcloud.net/skoltech/forestmapping/bands_and_terrain_texture.tiff"
-        filename = wget.download(url, out="../rasters/")
+        filename = wget.download(url, out=folder)
         self.path_to_tiff_file = filename
         return filename
 
     def normalize(self, band: pd.Series) -> pd.Series:
+        """Normalize pixels of bands
+
+        Args:
+            band (pd.Series): S2 band values
+
+        Returns:
+            pd.Series: normalized data
+        """
         band_min, band_max = (band.min(), band.max())
-        return (band - band_min) / ((band_max - band_min))
+        return (band - band_min) / (band_max - band_min)
 
     def scale_geom(self, shape, scale: float):
         return affinity.scale(shape, xfact=scale, yfact=scale, origin="center")
@@ -183,28 +193,6 @@ class Dataset:
                 all_cols.append(date + "_" + col)
         return all_cols
 
-    def prepare_entire_region(self, gdf: gpd.GeoDataFrame):
-        shape = box(*gdf.total_bounds)
-        src = rio.open(self.path_to_tiff_file)
-        out_image, _ = crop_mask(src, [shape], all_touched=True, crop=True)
-        x = out_image[:-4, ...].reshape(
-            len(self.cols), out_image.shape[1] * out_image.shape[2]
-        )
-        df_indices_field = pd.DataFrame(x.T, columns=self.cols)
-        df_indices_field = self.get_SVI(df_indices_field)
-
-        src = rio.open(self.path_to_tiff_file)
-        out_image, _ = crop_mask(src, [shape], all_touched=True, crop=True)
-        s2 = out_image[2, ...]
-        sub_m = np.where(s2 > 0, out_image[-4:, ...], -1)
-        x = sub_m[-4:, ...].reshape(
-            len(self.terrain_cols), out_image.shape[1] * out_image.shape[2]
-        )
-        df_terrain = pd.DataFrame(x.T, columns=self.terrain_cols)
-        mask = df_terrain.max(axis=1) == -1
-        df_terrain = df_terrain.loc[~mask]
-        return df_indices_field, df_terrain
-
     def get_dataset(
         self, gdf: gpd.GeoDataFrame, scale: float = 1.0
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -254,8 +242,6 @@ class Dataset:
         print(" -- Done ✅")
         mask = df_terrain["wetnessindex"] < 0
         df_terrain.loc[mask, "wetnessindex"] = 0
-        # for col in self.terrain_cols:
-        #     df_terrain.loc[:, col] = self.normalize(df_terrain[col])
 
         print("Start preparing texture")
         df_texture = pd.DataFrame(columns=[*self.texture_columns, "key", "class"])
@@ -265,7 +251,6 @@ class Dataset:
                 df = self.get_texture_by_shape(inv_dict, self.scale)
             else:
                 df = self.get_texture_by_shape(inv_dict, 1.0)
-            self._texture_point = df
             df_texture = pd.concat([df_texture, df])
 
         print(" -- Done ✅")
@@ -327,10 +312,8 @@ class Dataset:
         src = rio.open(self.path_to_tiff_file)
 
         out_image, _ = crop_mask(src, [shape], all_touched=True, crop=True)
-        self._out_image = out_image
         s2 = out_image[2, ...]
         sub_m = np.where(s2 > 0, out_image[16:20, ...], -1)
-        self._sub_m = sub_m
         x = sub_m.reshape(
             len(self.terrain_cols), out_image.shape[1] * out_image.shape[2]
         )
@@ -374,10 +357,28 @@ class Dataset:
         return df
 
     def NDVI(self, red: pd.Series, nir: pd.Series):
+        """NDVI
+
+        Args:
+            red (pd.Series): _description_
+            nir (pd.Series): _description_
+
+        Returns:
+            _type_: _description_
+        """
         ndvi = (nir - red) / ((nir + red).apply(lambda x: 0.000001 if x == 0 else x))
         return ndvi
 
     def EVI(self, red: pd.Series, nir: pd.Series):
+        """EVI
+
+        Args:
+            red (pd.Series): _description_
+            nir (pd.Series): _description_
+
+        Returns:
+            _type_: _description_
+        """
         evi2 = (
             2.5
             * (nir - red)
@@ -386,60 +387,45 @@ class Dataset:
         return evi2
 
     def NDRE(self, red_far: pd.Series, nir: pd.Series):
+        """NDRE
+
+        Args:
+            red_far (pd.Series): _description_
+            nir (pd.Series): _description_
+
+        Returns:
+            _type_: _description_
+        """
         ndre = (nir - red_far) / (
             (nir + red_far).apply(lambda x: 0.000001 if x == 0 else x)
         )
         return ndre
 
     def FCI(self, red: pd.Series, nir: pd.Series):
+        """Forect Cover Index
+
+        Args:
+            red (pd.Series): _description_
+            nir (pd.Series): _description_
+
+        Returns:
+            _type_: _description_
+        """
         fci = np.sqrt(red * nir)
         return fci
 
     def MSAVI(self, red: pd.Series, nir: pd.Series):
+        """MSAVI
+
+        Args:
+            red (pd.Series): _description_
+            nir (pd.Series): _description_
+
+        Returns:
+            _type_: _description_
+        """
         msavi = (2 * nir + 1 - ((2 * nir + 1) ** 2 - 8 * (nir - red)) ** (1 / 2)) / 2
         return msavi
-
-
-def get_train_test(
-    df: pd.DataFrame, gdf: gpd.GeoDataFrame, test_size: float, spacing: float = 0.015
-) -> tuple:
-    gdf_84 = gdf.to_crs(epsg=4326)
-    gdf_84.loc[:, "latitude"] = gdf_84["geometry"].centroid.y
-    gdf_84.loc[:, "longitude"] = gdf_84["geometry"].centroid.x
-    data = gdf_84.copy()
-    coordinates = (data.longitude, data.latitude)
-    values = np.array(data.index)
-
-    train_block, test_block = vd.train_test_split(
-        coordinates, values, test_size=test_size, random_state=123
-    )
-    print(
-        "Train and test size for random splits:",
-        train_block[0][0].size,
-        test_block[0][0].size,
-    )
-
-    train_block, test_block = vd.train_test_split(
-        coordinates,
-        values,
-        spacing=spacing,
-        test_size=test_size,
-        random_state=213,
-    )
-    print(
-        "Train and test size for block splits: ",
-        train_block[0][0].size,
-        test_block[0][0].size,
-    )
-
-    test_keys = gdf.loc[test_block[-2], "key"].values
-    train_keys = gdf.loc[train_block[-2], "key"].values
-    mask_test = df.loc[:, "key"].isin(test_keys)
-    mask_train = df.loc[:, "key"].isin(train_keys)
-
-    train = df.loc[mask_train]
-    test = df.loc[mask_test]
-    return train, test
 
 
 def decodeClasses(x):
@@ -533,40 +519,6 @@ def brighten(band: np.ndarray) -> np.ndarray:
     return np.clip(alpha * band + beta, 0, 255)
 
 
-def remove_outliers(df: pd.DataFrame) -> pd.DataFrame:
-    outliers_fraction = 0.1
-    iso_forest = IsolationForest(contamination=outliers_fraction, random_state=42)
-    X = df.iloc[:, :-2]
-    outs = iso_forest.fit(X).predict(X)
-    mask = outs != -1
-    df = df.loc[mask]
-    return df
-
-
-def resample(df: pd.DataFrame):
-    rus = SMOTE()
-    X_res, y_res = rus.fit_resample(df.iloc[:, :-1], df.iloc[:, -1].astype(int))
-    sub_df_resampled = pd.DataFrame(X_res, columns=df.columns[:-1])
-    sub_df_resampled.loc[:, "class"] = y_res
-
-
-def resample_forest(df: pd.DataFrame):
-    rus = SMOTE()
-    forest = df.loc[df["class"] < 8]
-    X_res, y_res = rus.fit_resample(forest.iloc[:, :-1], forest.iloc[:, -1].astype(int))
-    sub_df_resampled = pd.DataFrame(X_res, columns=df.columns[:-1])
-    sub_df_resampled.loc[:, "class"] = y_res
-    df = pd.concat([df.loc[df["class"] > 8], sub_df_resampled])
-    return df
-
-
-# def scale_normalize(df: pd.DataFrame) -> pd.DataFrame:
-#     _X = df.iloc[:, :-2]
-#     scaled = StandardScaler().fit_transform(_X)
-#     df.iloc[:, :-2] = scaled
-#     return df
-
-
 def get_metric(base_classfiers: list, y_test: np.ndarray, X_test: np.ndarray):
     score_classfiers_accuracy_score = []
     score_classfiers_roc_auc_score = []
@@ -626,7 +578,6 @@ def get_metric(base_classfiers: list, y_test: np.ndarray, X_test: np.ndarray):
     df_score_class = df_score_class_list[0]
     for i in range(1, len(df_score_class_list)):
         df_score_class = df_score_class.join(df_score_class_list[i])
-    df_score_class_index = list(df_score_class.index)
 
     df_score_group = pd.DataFrame(
         columns=["Model", "Accuracy score", "ROC AUC score", "f1 score"]
@@ -719,56 +670,7 @@ def get_models(class_weights: dict) -> list:
                 "learning_rate": 0.1202,
             }
         ),
-        #                    XGBClassifier(n_jobs=-1, tree_method='gpu_hist', predictor='gpu_predictor', booster='gblinear', eta=0.3, gamma='auto', max_depth=20)
     ]
-
-
-# attaching clusters to each row according to the number of plot
-# attaching clusters to each row according to the number of plot
-def get_cluster_pixels(
-    data: pd.DataFrame, key: int = 1, correlation_threshold: float = 0.7
-) -> pd.DataFrame:
-    attmpt = data[data.key == key]
-    attmpt_c = attmpt.drop(columns=["key", "class"]).corr().abs()  #'index',
-    # attmpt.corr().style.background_gradient(cmap="Blues")
-
-    # Select upper triangle of correlation matrix
-    upper = attmpt_c.where(np.triu(np.ones(attmpt_c.shape), k=1).astype(bool))
-
-    # Find features with correlation greater than 0.95
-    to_drop = [
-        column for column in upper.columns if any(upper[column] > correlation_threshold)
-    ]
-
-    # Drop features
-    attmpt_ = attmpt.drop(to_drop, axis=1)  # , inplace=True)
-
-    # preprocessing of the data
-    # from sklearn.preprocessing import StandardScaler
-    # scaler = StandardScaler()
-    # scaler.fit(attmpt_.drop(columns=["key", "class"]))  #'index',
-    scaled_data = attmpt_.drop(columns=["key", "class"])  #'index',
-    # from yellowbrick.cluster import KElbowVisualizer
-    model = KMeans(n_init=10)
-    # k is range of number of clusters.
-    visualizer = KElbowVisualizer(model, k=(1, 8), timings=True)
-    visualizer.fit(scaled_data)  # Fit data to visualizer
-    plt.close()
-    elbow_value = visualizer.elbow_value_
-    if elbow_value == None:
-        elbow_value = 2
-    kmeans_model = KMeans(
-        n_clusters=elbow_value, random_state=100
-    )  # elbow_value_ == number of clusters
-    kmeans_model.fit(scaled_data)
-
-    attmpt["clusters"] = kmeans_model.labels_
-    attmpt.clusters.value_counts().reset_index()  # .duplicated(subset=['clusters'])#.iloc[0,0]
-
-    return attmpt
-
-
-##selection of rows related to most abundant clusters
 
 
 def get_selection(attmpt: pd.DataFrame) -> pd.DataFrame:
