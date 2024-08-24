@@ -3,11 +3,12 @@
 
 __Source code for paper related to forest species mapping supported with machine learning using spectral, terrain and texture features__
 
-We observed the influence of various feature types, including values of initial bands, vegetation indices, terrain features and texture features on the performance of popular machine learning algorithms, namely Random Forest, Support Vector Machine, eXtreme Gradient Boosting and kNN
+We observed the influence of various feature types, including values of initial bands, vegetation indices, terrain features and texture features on the performance of popular machine learning algorithms, namely Random Forest (RF), Support Vector Machine (SVM), eXtreme Gradient Boosting (XGB) and k-Nearest Neighbour (kNN).
 
-Map demonstrate classified forest map by Ridge Regression
+The maps below demonstrate the classified study territory and corresponding inference uncertainty based on the Shannon entropy. Letters a, b, c, and d denote the performance of RF, SVM, XGB, and kNN correspondingly.
 
-![Forest mapping](/plots/result_maps.png)
+![Forest mapping](/plots/predictions_forests.png)
+![Forest mapping](/plots/results_all.png)
 
 ## Installation
 
