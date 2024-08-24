@@ -8,7 +8,7 @@ We observed the influence of various feature types, including values of initial 
 The maps below demonstrate the classified study territory and corresponding inference uncertainty based on the Shannon entropy. Letters a, b, c, and d denote the performance of RF, SVM, XGB, and kNN correspondingly.
 
 ![Forest mapping](/plots/predictions_forests.png)
-![Forest mapping](/plots/results_all.png)
+![Forest mapping](/plots/shannon_uq.png)
 
 ## Installation
 
